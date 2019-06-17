@@ -20,6 +20,7 @@ import javax.enterprise.inject.se.SeContainerInitializer;
 
 import javax.enterprise.inject.spi.Extension;
 
+import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 
@@ -77,6 +78,7 @@ public class TestSpike {
       super();
     }
 
+    @GET
     @Path("gorp")
     @Produces("text/plain")
     public String gorp() {
