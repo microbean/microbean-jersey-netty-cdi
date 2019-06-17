@@ -27,6 +27,8 @@ import org.junit.Test;
 
 import org.microbean.jaxrs.cdi.JaxRsExtension;
 
+import static org.junit.Assume.assumeTrue;
+
 public class TestSpike {
 
   private AutoCloseable container;
@@ -38,6 +40,7 @@ public class TestSpike {
   @Before
   public void startContainer() throws Exception {
     this.stopContainer();
+    assumeTrue(Boolean.getBoolean("runBlockingTests"));
     final SeContainerInitializer initializer = SeContainerInitializer.newInstance();
     initializer.disableDiscovery();
     initializer.addExtensions(JaxRsExtension.class,
@@ -57,7 +60,7 @@ public class TestSpike {
 
   @Test
   public void testSpike() {
-
+    assumeTrue(Boolean.getBoolean("runBlockingTests"));
   }
 
   @Path("")
