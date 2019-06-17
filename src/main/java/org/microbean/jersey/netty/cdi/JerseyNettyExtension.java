@@ -78,6 +78,7 @@ import io.netty.handler.codec.http.HttpRequest;
 
 import io.netty.handler.ssl.SslContext;
 
+import io.netty.util.concurrent.EventExecutorGroup;
 import io.netty.util.concurrent.RejectedExecutionHandler;
 import io.netty.util.concurrent.RejectedExecutionHandlers;
 import io.netty.util.concurrent.EventExecutorChooserFactory;
@@ -93,41 +94,27 @@ public class JerseyNettyExtension implements Extension {
 
   private static final Annotation[] EMPTY_ANNOTATION_ARRAY = new Annotation[0];
 
+  private volatile Collection<EventExecutorGroup> eventExecutorGroups;
+
+  private volatile CountDownLatch startupLatch;
+
+  private volatile CountDownLatch runLatch;
+  
   private volatile CountDownLatch shutdownLatch;
 
   public JerseyNettyExtension() {
     super();
-  }
-
-  // TODO: prioritize to run after JaxRsExtension
-  private final void afterBeanDiscovery(@Observes final AfterBeanDiscovery event,
-                                        final BeanManager beanManager) {
-    final JaxRsExtension extension = beanManager.getExtension(JaxRsExtension.class);
-    if (extension != null) {
-      final Set<Set<Annotation>> qualifierSets = extension.getAllApplicationQualifiers();
-      if (qualifierSets != null && !qualifierSets.isEmpty()) {
-        for (final Set<Annotation> qualifiers : qualifierSets) {
-          final Annotation[] qualifiersArray;
-          if (qualifiers == null) {
-            qualifiersArray = null;
-          } else if (qualifiers.isEmpty()) {
-            qualifiersArray = EMPTY_ANNOTATION_ARRAY;
-          } else {
-            qualifiersArray = qualifiers.toArray(new Annotation[qualifiers.size()]);
+    final Thread containerThread = Thread.currentThread();
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+          zeroOut(this.runLatch);
+          zeroOut(this.startupLatch);
+          containerThread.interrupt();
+          try {
+            containerThread.join();
+          } catch (final InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
           }
-
-          if (noBeans(beanManager, ServerBootstrap.class, qualifiers)) {
-            event.addBean()
-              .scope(Dependent.class)
-              .addTransitiveTypeClosure(ServerBootstrap.class)
-              .addQualifiers(qualifiersArray)
-              .produceWith(instance -> getServerBootstrap(beanManager, instance, qualifiersArray, false));
-          }
-
-        }
-
-      }
-    }
+    }));
   }
 
   // TODO: prioritize
@@ -135,145 +122,218 @@ public class JerseyNettyExtension implements Extension {
                                final Object event,
                                final BeanManager beanManager)
     throws URISyntaxException {
-    if (event != null && beanManager != null) {
+    if (beanManager != null) {
       final JaxRsExtension extension = beanManager.getExtension(JaxRsExtension.class);
       if (extension != null) {
-        final Set<Set<Annotation>> qualifierSets = extension.getAllApplicationQualifiers();
-        if (qualifierSets != null && !qualifierSets.isEmpty()) {
+        final Set<Set<Annotation>> applicationQualifierSets = extension.getAllApplicationQualifiers();
+        if (applicationQualifierSets != null && !applicationQualifierSets.isEmpty()) {
 
           final Instance<Object> instance = beanManager.createInstance();
           assert instance != null;
 
-          final int size = qualifierSets.size();
+          final int size = applicationQualifierSets.size();
           assert size > 0;
           this.shutdownLatch = new CountDownLatch(size);
-          final CountDownLatch startupLatch = new CountDownLatch(size);
+          this.startupLatch = new CountDownLatch(size);
 
-          for (final Set<Annotation> qualifiers : qualifierSets) {
+          for (final Set<Annotation> applicationQualifiers : applicationQualifierSets) {
 
-            final Annotation[] qualifiersArray;
-            if (qualifiers == null) {
-              qualifiersArray = null;
-            } else if (qualifiers.isEmpty()) {
-              qualifiersArray = EMPTY_ANNOTATION_ARRAY;
+            // Quick check to bail out if someone CTRL-Ced and caused
+            // Weld's shutdown hook to fire.  That hook fires
+            // a @BeforeDestroyed event on a Thread that is not this
+            // Thread, so it's possible to be processing
+            // an @Initialized(ApplicationScoped.class) event on the
+            // container thread while also processing
+            // a @BeforeDestroyed(ApplicationScoped.class) event.  We
+            // basically want to skip bootstrapping a bunch of things
+            // if we're going down anyway.
+            //
+            // Be particularly mindful later on of the state of the
+            // latches.
+            if (Thread.currentThread().isInterrupted()) {
+              zeroOut(this.startupLatch);
+              this.startupLatch = null;
+              break;
+            }
+          
+            final Annotation[] applicationQualifiersArray;
+            if (applicationQualifiers == null) {
+              applicationQualifiersArray = null;
+            } else if (applicationQualifiers.isEmpty()) {
+              applicationQualifiersArray = EMPTY_ANNOTATION_ARRAY;
             } else {
-              qualifiersArray = qualifiers.toArray(new Annotation[qualifiers.size()]);
+              applicationQualifiersArray = applicationQualifiers.toArray(new Annotation[applicationQualifiers.size()]);
             }
 
-            final Set<Bean<?>> beans = beanManager.getBeans(Application.class, qualifiersArray);
-            if (beans == null || beans.isEmpty()) {
+            final Set<Bean<?>> applicationBeans = beanManager.getBeans(Application.class, applicationQualifiersArray);
+            assert applicationBeans != null;
+            assert !applicationBeans.isEmpty();
 
-              // Pretend that our initial count was one smaller since
-              // this server won't even start.
-              startupLatch.countDown();
-              assert startupLatch.getCount() >= 0L : "Unexpected startup count: " + startupLatch.getCount();
+            try {
 
-              // Same with shutdowns.
-              this.shutdownLatch.countDown();
-              assert this.shutdownLatch.getCount() >= 0L : "Unexpected shutdown count: " + this.shutdownLatch.getCount();
+              @SuppressWarnings("unchecked")
+              final Bean<Application> applicationBean = (Bean<Application>)beanManager.resolve(applicationBeans);
+              assert applicationBean != null;
+              
+              // TODO: need to somehow squirrel away creationalContext
+              // and release it after the application goes out of
+              // scope; kind of doesn't really matter because
+              // Applications are long-lived but still.
+              final Application application =
+                (Application)beanManager.getReference(applicationBean,
+                                                      Application.class,
+                                                      beanManager.createCreationalContext(applicationBean));
+              assert application != null;
 
-            } else {
-
-              try {
-
-                @SuppressWarnings("unchecked")
-                final Bean<Application> applicationBean = (Bean<Application>)beanManager.resolve(beans);
-                assert applicationBean != null;
-
-                // TODO: need to somehow squirrel away creationalContext
-                // and release it after the application goes out of
-                // scope; kind of doesn't really matter because
-                // Applications are long-lived but still.
-                final Application application =
-                  (Application)beanManager.getReference(applicationBean,
-                                                        Application.class,
-                                                        beanManager.createCreationalContext(applicationBean));
-                assert application != null;
-
-                final ApplicationPath applicationPathAnnotation = application.getClass().getAnnotation(ApplicationPath.class);
-                final String applicationPath;
-                if (applicationPathAnnotation == null) {
-                  applicationPath = "/";
-                } else {
-                  applicationPath = applicationPathAnnotation.value();
-                }
-                assert applicationPath != null;
-
-                final ServerBootstrap serverBootstrap = getServerBootstrap(beanManager, instance, qualifiersArray, true);
-                assert serverBootstrap != null;
-
-                final SslContext sslContext = getSslContext(beanManager, instance, qualifiersArray, true);
-
-                final URI baseUri;
-                if (sslContext == null) {
-                  baseUri = new URI("http",
-                                    null /* no userInfo */,
-                                    "0.0.0.0", // TODO config
-                                    8080, // TODO config
-                                    applicationPath,
-                                    null /* no query */,
-                                    null /* no fragment */);
-                } else {
-                  baseUri = new URI("https",
-                                    null /* no userInfo */,
-                                    "0.0.0.0", // TODO config
-                                    443, // TODO config
-                                    applicationPath,
-                                    null /* no query */,
-                                    null /* no fragment */);
-                }
-
-                final BiFunction<? super ChannelHandlerContext, ? super HttpRequest, ? extends SecurityContext> securityContextBiFunction = null; // TODO
-
-                serverBootstrap.childHandler(new JerseyChannelInitializer(baseUri, sslContext, new ApplicationHandler(application), securityContextBiFunction));
-
-                serverBootstrap.validate();
-
-                final ChannelFuture bindFuture = serverBootstrap.bind(baseUri.getHost(), baseUri.getPort());
-                assert bindFuture != null;
-                bindFuture.addListener(c -> startupLatch.countDown());
-
-                final ChannelFuture closeFuture = bindFuture.channel().closeFuture();
-                assert closeFuture != null;
-                closeFuture.addListener(c -> this.shutdownLatch.countDown());
-
-                try {
-                  startupLatch.await();
-                } catch (final InterruptedException interruptedException) {
-                  Thread.currentThread().interrupt();
-                }
-                
-              } catch (final RuntimeException | URISyntaxException throwMe) {
-                zeroOut(startupLatch);
-                zeroOut(this.shutdownLatch);
-                assert startupLatch.getCount() == 0L : "Unexpected startupLatch count: " + startupLatch.getCount();
-                assert this.shutdownLatch.getCount() == 0L : "Unexpected shutdownLatch count: " + this.shutdownLatch.getCount();
-                throw throwMe;
+              final ApplicationPath applicationPathAnnotation = application.getClass().getAnnotation(ApplicationPath.class);
+              final String applicationPath;
+              if (applicationPathAnnotation == null) {
+                applicationPath = "/";
+              } else {
+                applicationPath = applicationPathAnnotation.value();
               }
+              assert applicationPath != null;
+
+              final ServerBootstrap serverBootstrap = getServerBootstrap(beanManager, instance, applicationQualifiersArray, true);
+              assert serverBootstrap != null;
+
+              final SslContext sslContext = getSslContext(beanManager, instance, applicationQualifiersArray, true);
+
+              final URI baseUri;
+              if (sslContext == null) {
+                baseUri = new URI("http",
+                                  null /* no userInfo */,
+                                  "0.0.0.0", // TODO config
+                                  8080, // TODO config
+                                  applicationPath,
+                                  null /* no query */,
+                                  null /* no fragment */);
+              } else {
+                baseUri = new URI("https",
+                                  null /* no userInfo */,
+                                  "0.0.0.0", // TODO config
+                                  443, // TODO config
+                                  applicationPath,
+                                  null /* no query */,
+                                  null /* no fragment */);
+              }
+              assert baseUri != null;
+
+              final BiFunction<? super ChannelHandlerContext, ? super HttpRequest, ? extends SecurityContext> securityContextBiFunction = null; // TODO
+
+              serverBootstrap.childHandler(new JerseyChannelInitializer(baseUri,
+                                                                        sslContext,
+                                                                        new ApplicationHandler(application),
+                                                                        securityContextBiFunction));
+              
+              serverBootstrap.validate();
+              
+              final EventLoopGroup group = serverBootstrap.config().group();
+              assert group != null; // see validate() above
+              group.terminationFuture()
+                .addListener(f -> {
+                    try {
+                      if (!f.isSuccess()) {
+                        final Throwable throwable = f.cause();
+                        if (throwable != null) {
+                          // TODO: logProperly
+                          throwable.printStackTrace();
+                        }
+                      }
+                    } finally {
+                      this.shutdownLatch.countDown();
+                    }
+                  });
+              
+              Collection<EventExecutorGroup> eventExecutorGroups = this.eventExecutorGroups;
+              if (eventExecutorGroups == null) {
+                eventExecutorGroups = new ArrayList<>();
+                this.eventExecutorGroups = eventExecutorGroups;
+              }
+              synchronized (eventExecutorGroups) {
+                eventExecutorGroups.add(group);
+              }
+              
+              serverBootstrap.bind(baseUri.getHost(), baseUri.getPort())
+                .addListener(f -> {
+                    try {
+                      if (!f.isSuccess()) {
+                        final Throwable throwable = f.cause();
+                        if (throwable != null) {
+                          // TODO: log properly
+                          throwable.printStackTrace();
+                        }
+                      }
+                    } finally {
+                      final CountDownLatch latch = this.startupLatch;
+                      if (latch != null) {
+                        latch.countDown();
+                      }
+                    }
+                  });
+              
+            } catch (final RuntimeException | URISyntaxException throwMe) {
+              zeroOut(this.startupLatch);
+              zeroOut(this.shutdownLatch);
+              throw throwMe;
             }
+            
           }
+
+          if (this.startupLatch != null) {
+            try {
+              this.startupLatch.await();
+            } catch (final InterruptedException interruptedException) {
+              Thread.currentThread().interrupt();
+            }
+            this.startupLatch = null;
+            this.runLatch = new CountDownLatch(1);
+          }
+          
         }
       }
     }
+    assert this.startupLatch == null;
   }
 
   private final void waitForAllServersToStop(@Observes @BeforeDestroyed(ApplicationScoped.class)
                                              final Object event) {
-    if (event != null) {
+
+    // Note: somewhat interestingly, Weld can fire a @BeforeDestroyed
+    // event on a thread that is not the container thread: a shutdown
+    // hook that it installs.  So we have to take care to be thread
+    // safe.
+
+    final CountDownLatch runLatch = this.runLatch;
+    if (runLatch != null) {
       try {
-        this.shutdownLatch.await();
+        runLatch.await();
       } catch (final InterruptedException interruptedException) {
         Thread.currentThread().interrupt();
       }
+      this.runLatch = null;
     }
-  }
 
-  private final void zeroOut(final CountDownLatch latch) {
-    if (latch != null) {
-      while (latch.getCount() > 0L) {
-        latch.countDown();
+    final Collection<EventExecutorGroup> eventExecutorGroups = this.eventExecutorGroups;
+    if (eventExecutorGroups != null) {
+      synchronized (eventExecutorGroups) {
+        for (final EventExecutorGroup group : eventExecutorGroups) {
+          // idempotent
+          group.shutdownGracefully();
+        }
+        eventExecutorGroups.clear();
       }
-      assert latch.getCount() == 0L;
+      this.eventExecutorGroups = null;
+    }
+
+    final CountDownLatch shutdownLatch = this.shutdownLatch;
+    if (shutdownLatch != null) {
+      try {
+        shutdownLatch.await();
+      } catch (final InterruptedException interruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      this.shutdownLatch = null;
     }
   }
 
@@ -332,7 +392,6 @@ public class JerseyNettyExtension implements Extension {
 
                      // Permit arbitrary customization
                      beanManager.getEvent().select(ServerBootstrap.class, qualifiersArray).fire(returnValue);
-                     returnValue.validate();
                      return returnValue;
                    });
   }
@@ -445,20 +504,6 @@ public class JerseyNettyExtension implements Extension {
    */
 
 
-  private static final boolean noBeans(final BeanManager beanManager, final Type type, final Set<? extends Annotation> qualifiers) {
-    final Collection<?> beans;
-    if (beanManager != null && type != null) {
-      if (qualifiers == null || qualifiers.isEmpty()) {
-        beans = beanManager.getBeans(type);
-      } else {
-        beans = beanManager.getBeans(type, qualifiers.toArray(new Annotation[qualifiers.size()]));
-      }
-    } else {
-      beans = null;
-    }
-    return beans == null || beans.isEmpty();
-  }
-
   private static final <T> T acquire(final BeanManager beanManager,
                                      final Instance<Object> instance,
                                      final TypeLiteral<T> typeLiteral,
@@ -519,6 +564,15 @@ public class JerseyNettyExtension implements Extension {
     return returnValue;
   }
 
+  private static final void zeroOut(final CountDownLatch latch) {
+    if (latch != null) {
+      while (latch.getCount() > 0L) {
+        latch.countDown();
+      }
+      assert latch.getCount() == 0L;
+    }
+  }
+  
 
   /*
    * Inner and nested classes.

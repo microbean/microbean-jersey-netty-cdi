@@ -109,6 +109,13 @@
       <scope>test</scope>
     </dependency>
 
+    <dependency>
+      <groupId>org.microbean</groupId>
+      <artifactId>microbean-weld-se-environment</artifactId>
+      <type>pom</type>
+      <scope>test</scope>
+    </dependency>
+
 
     <!-- Runtime-scoped dependencies. -->
 
