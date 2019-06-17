@@ -18,6 +18,8 @@ package org.microbean.jersey.netty.cdi;
 
 import javax.enterprise.inject.se.SeContainerInitializer;
 
+import javax.enterprise.inject.spi.Extension;
+
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 
@@ -64,15 +66,15 @@ public class TestSpike {
   }
 
   @Path("")
-  private static final class MyResource {
+  public static final class MyResource {
 
-    private MyResource() {
+    public MyResource() {
       super();
     }
 
     @Path("gorp")
     @Produces("text/plain")
-    public final String gorp() {
+    public String gorp() {
       return "Gorp";
     }
     
