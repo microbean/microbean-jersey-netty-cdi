@@ -28,6 +28,8 @@ import java.nio.channels.spi.SelectorProvider;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -43,6 +45,8 @@ import javax.enterprise.context.Initialized;
 
 import javax.enterprise.event.Observes;
 
+import javax.enterprise.inject.Any;
+import javax.enterprise.inject.Default;
 import javax.enterprise.inject.Instance;
 
 import javax.enterprise.inject.spi.AfterBeanDiscovery;
@@ -60,6 +64,7 @@ import javax.ws.rs.core.Application;
 import javax.ws.rs.core.SecurityContext;
 
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.bootstrap.ServerBootstrapConfig;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFactory;
@@ -79,12 +84,15 @@ import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.ssl.SslContext;
 
 import io.netty.util.concurrent.EventExecutorGroup;
+import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.RejectedExecutionHandler;
 import io.netty.util.concurrent.RejectedExecutionHandlers;
 import io.netty.util.concurrent.EventExecutorChooserFactory;
 import io.netty.util.concurrent.DefaultEventExecutorChooserFactory;
 
 import org.glassfish.jersey.server.ApplicationHandler;
+
+import org.microbean.configuration.api.Configurations;
 
 import org.microbean.jaxrs.cdi.JaxRsExtension;
 
@@ -130,6 +138,10 @@ public class JerseyNettyExtension implements Extension {
 
           final Instance<Object> instance = beanManager.createInstance();
           assert instance != null;
+
+          final Configurations configurations = instance.select(Configurations.class).get();
+
+          final Map<String, String> baseConfigurationCoordinates = configurations.getConfigurationCoordinates();
 
           final int size = applicationQualifierSets.size();
           assert size > 0;
@@ -199,20 +211,35 @@ public class JerseyNettyExtension implements Extension {
 
               final SslContext sslContext = getSslContext(beanManager, instance, applicationQualifiersArray, true);
 
+              final Map<String, String> qualifierCoordinates = toConfigurationCoordinates(applicationQualifiers);
+              final Map<String, String> configurationCoordinates;
+              if (baseConfigurationCoordinates == null || baseConfigurationCoordinates.isEmpty()) {
+                if (qualifierCoordinates == null || qualifierCoordinates.isEmpty()) {
+                  configurationCoordinates = baseConfigurationCoordinates;
+                } else {
+                  configurationCoordinates = qualifierCoordinates;
+                }
+              } else if (qualifierCoordinates == null || qualifierCoordinates.isEmpty()) {
+                configurationCoordinates = baseConfigurationCoordinates;
+              } else {
+                configurationCoordinates = new HashMap<>(baseConfigurationCoordinates);
+                configurationCoordinates.putAll(qualifierCoordinates);
+              }
+              
               final URI baseUri;
               if (sslContext == null) {
                 baseUri = new URI("http",
                                   null /* no userInfo */,
-                                  "0.0.0.0", // TODO config
-                                  8080, // TODO config
+                                  configurations.getValue(configurationCoordinates, "host", "0.0.0.0"),
+                                  configurations.getValue(configurationCoordinates, "port", Integer.TYPE, "8080"),
                                   applicationPath,
                                   null /* no query */,
                                   null /* no fragment */);
               } else {
                 baseUri = new URI("https",
                                   null /* no userInfo */,
-                                  "0.0.0.0", // TODO config
-                                  443, // TODO config
+                                  configurations.getValue(configurationCoordinates, "host", "0.0.0.0"),
+                                  configurations.getValue(configurationCoordinates, "port", Integer.TYPE, "443"),
                                   applicationPath,
                                   null /* no query */,
                                   null /* no fragment */);
@@ -225,10 +252,12 @@ public class JerseyNettyExtension implements Extension {
                                                                         sslContext,
                                                                         new ApplicationHandler(application),
                                                                         securityContextBiFunction));
-              
               serverBootstrap.validate();
+
+              final ServerBootstrapConfig config = serverBootstrap.config();
+              assert config != null;
               
-              final EventLoopGroup group = serverBootstrap.config().group();
+              final EventLoopGroup group = config.group();
               assert group != null; // see validate() above
               group.terminationFuture()
                 .addListener(f -> {
@@ -254,8 +283,13 @@ public class JerseyNettyExtension implements Extension {
                 eventExecutorGroups.add(group);
               }
               
-              serverBootstrap.bind(baseUri.getHost(), baseUri.getPort())
-                .addListener(f -> {
+              final Future<?> bindFuture;
+              if (config.localAddress() == null) {
+                bindFuture = serverBootstrap.bind(baseUri.getHost(), baseUri.getPort());
+              } else {
+                bindFuture = serverBootstrap.bind();
+              }
+              bindFuture.addListener(f -> {
                     try {
                       if (!f.isSuccess()) {
                         final Throwable throwable = f.cause();
@@ -571,6 +605,18 @@ public class JerseyNettyExtension implements Extension {
       }
       assert latch.getCount() == 0L;
     }
+  }
+
+  private static final Map<String, String> toConfigurationCoordinates(final Set<? extends Annotation> qualifiers) {
+    final Map<String, String> returnValue = new HashMap<>();
+    if (qualifiers != null && !qualifiers.isEmpty()) {
+      for (final Annotation qualifier : qualifiers) {
+        if (!(qualifier instanceof Default) && !(qualifier instanceof Any)) {
+          returnValue.put(qualifier.toString(), "");
+        }
+      }
+    }
+    return returnValue;
   }
   
 

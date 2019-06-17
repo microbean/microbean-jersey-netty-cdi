@@ -27,6 +27,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.glassfish.jersey.ext.cdi1x.internal.CdiComponentProvider;
+
+import org.microbean.configuration.cdi.ConfigurationsExtension;
+
 import org.microbean.jaxrs.cdi.JaxRsExtension;
 
 import static org.junit.Assume.assumeTrue;
@@ -45,9 +49,10 @@ public class TestSpike {
     assumeTrue(Boolean.getBoolean("runBlockingTests"));
     final SeContainerInitializer initializer = SeContainerInitializer.newInstance();
     initializer.disableDiscovery();
-    initializer.addExtensions(JaxRsExtension.class,
+    initializer.addExtensions(ConfigurationsExtension.class,
+                              JaxRsExtension.class,
                               JerseyNettyExtension.class,
-                              org.glassfish.jersey.ext.cdi1x.internal.CdiComponentProvider.class);
+                              CdiComponentProvider.class);
     initializer.addBeanClasses(MyResource.class);
     this.container = initializer.initialize();
   }
