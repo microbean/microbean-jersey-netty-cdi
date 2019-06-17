@@ -18,9 +18,6 @@ package org.microbean.jersey.netty.cdi;
 
 import java.lang.annotation.Annotation;
 
-import java.lang.reflect.Type;
-
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 
@@ -40,7 +37,6 @@ import java.util.function.BiFunction;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.context.BeforeDestroyed;
-import javax.enterprise.context.Dependent;
 import javax.enterprise.context.Initialized;
 
 import javax.enterprise.event.Observes;
@@ -49,14 +45,14 @@ import javax.enterprise.inject.Any;
 import javax.enterprise.inject.Default;
 import javax.enterprise.inject.Instance;
 
-import javax.enterprise.inject.spi.AfterBeanDiscovery;
 import javax.enterprise.inject.spi.Bean;
 import javax.enterprise.inject.spi.BeanManager;
+import javax.enterprise.inject.spi.DeploymentException;
 import javax.enterprise.inject.spi.Extension;
 
 import javax.enterprise.util.TypeLiteral;
 
-import javax.inject.Singleton;
+import javax.inject.Named;
 
 import javax.ws.rs.ApplicationPath;
 
@@ -66,9 +62,7 @@ import javax.ws.rs.core.SecurityContext;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.bootstrap.ServerBootstrapConfig;
 
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelFactory;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.DefaultSelectStrategyFactory;
 import io.netty.channel.EventLoopGroup;
@@ -102,20 +96,23 @@ public class JerseyNettyExtension implements Extension {
 
   private static final Annotation[] EMPTY_ANNOTATION_ARRAY = new Annotation[0];
 
+  private final Collection<Throwable> shutdownProblems;
+
   private volatile Collection<EventExecutorGroup> eventExecutorGroups;
 
-  private volatile CountDownLatch startupLatch;
+  private volatile CountDownLatch bindLatch;
 
   private volatile CountDownLatch runLatch;
-  
+
   private volatile CountDownLatch shutdownLatch;
 
   public JerseyNettyExtension() {
     super();
+    this.shutdownProblems = new ArrayList<>();
     final Thread containerThread = Thread.currentThread();
     Runtime.getRuntime().addShutdownHook(new Thread(() -> {
           zeroOut(this.runLatch);
-          zeroOut(this.startupLatch);
+          zeroOut(this.bindLatch);
           containerThread.interrupt();
           try {
             containerThread.join();
@@ -146,7 +143,8 @@ public class JerseyNettyExtension implements Extension {
           final int size = applicationQualifierSets.size();
           assert size > 0;
           this.shutdownLatch = new CountDownLatch(size);
-          this.startupLatch = new CountDownLatch(size);
+          this.bindLatch = new CountDownLatch(size);
+          final Collection<Throwable> bindProblems = new ArrayList<>();
 
           for (final Set<Annotation> applicationQualifiers : applicationQualifierSets) {
 
@@ -163,11 +161,11 @@ public class JerseyNettyExtension implements Extension {
             // Be particularly mindful later on of the state of the
             // latches.
             if (Thread.currentThread().isInterrupted()) {
-              zeroOut(this.startupLatch);
-              this.startupLatch = null;
+              zeroOut(this.bindLatch);
+              this.bindLatch = null;
               break;
             }
-          
+
             final Annotation[] applicationQualifiersArray;
             if (applicationQualifiers == null) {
               applicationQualifiersArray = null;
@@ -186,7 +184,7 @@ public class JerseyNettyExtension implements Extension {
               @SuppressWarnings("unchecked")
               final Bean<Application> applicationBean = (Bean<Application>)beanManager.resolve(applicationBeans);
               assert applicationBean != null;
-              
+
               // TODO: need to somehow squirrel away creationalContext
               // and release it after the application goes out of
               // scope; kind of doesn't really matter because
@@ -225,7 +223,7 @@ public class JerseyNettyExtension implements Extension {
                 configurationCoordinates = new HashMap<>(baseConfigurationCoordinates);
                 configurationCoordinates.putAll(qualifierCoordinates);
               }
-              
+
               final URI baseUri;
               if (sslContext == null) {
                 baseUri = new URI("http",
@@ -256,7 +254,7 @@ public class JerseyNettyExtension implements Extension {
 
               final ServerBootstrapConfig config = serverBootstrap.config();
               assert config != null;
-              
+
               final EventLoopGroup group = config.group();
               assert group != null; // see validate() above
               group.terminationFuture()
@@ -265,15 +263,16 @@ public class JerseyNettyExtension implements Extension {
                       if (!f.isSuccess()) {
                         final Throwable throwable = f.cause();
                         if (throwable != null) {
-                          // TODO: logProperly
-                          throwable.printStackTrace();
+                          synchronized (this.shutdownProblems) {
+                            this.shutdownProblems.add(throwable);
+                          }
                         }
                       }
                     } finally {
                       this.shutdownLatch.countDown();
                     }
                   });
-              
+
               Collection<EventExecutorGroup> eventExecutorGroups = this.eventExecutorGroups;
               if (eventExecutorGroups == null) {
                 eventExecutorGroups = new ArrayList<>();
@@ -282,7 +281,7 @@ public class JerseyNettyExtension implements Extension {
               synchronized (eventExecutorGroups) {
                 eventExecutorGroups.add(group);
               }
-              
+
               final Future<?> bindFuture;
               if (config.localAddress() == null) {
                 bindFuture = serverBootstrap.bind(baseUri.getHost(), baseUri.getPort());
@@ -294,40 +293,65 @@ public class JerseyNettyExtension implements Extension {
                       if (!f.isSuccess()) {
                         final Throwable throwable = f.cause();
                         if (throwable != null) {
-                          // TODO: log properly
-                          throwable.printStackTrace();
+                          synchronized (bindProblems) {
+                            bindProblems.add(throwable);
+                          }
                         }
                       }
                     } finally {
-                      final CountDownLatch latch = this.startupLatch;
+                      final CountDownLatch latch = this.bindLatch;
                       if (latch != null) {
                         latch.countDown();
                       }
                     }
                   });
-              
+
             } catch (final RuntimeException | URISyntaxException throwMe) {
-              zeroOut(this.startupLatch);
+              zeroOut(this.bindLatch);
               zeroOut(this.shutdownLatch);
+              synchronized (bindProblems) {
+                for (final Throwable bindProblem : bindProblems) {
+                  throwMe.addSuppressed(bindProblem);
+                }
+              }
               throw throwMe;
             }
-            
+
           }
 
-          if (this.startupLatch != null) {
+          final CountDownLatch bindLatch = this.bindLatch;
+          if (bindLatch != null) {
             try {
-              this.startupLatch.await();
+              bindLatch.await();
             } catch (final InterruptedException interruptedException) {
               Thread.currentThread().interrupt();
             }
-            this.startupLatch = null;
-            this.runLatch = new CountDownLatch(1);
+            assert bindLatch.getCount() <= 0;
+            this.bindLatch = null;
           }
-          
+
+          DeploymentException throwMe = null;
+          synchronized (bindProblems) {
+            for (final Throwable bindProblem : bindProblems) {
+              if (throwMe == null) {
+                throwMe = new DeploymentException(bindProblem);
+              } else {
+                throwMe.addSuppressed(bindProblem);
+              }
+            }
+            bindProblems.clear();
+          }
+          if (throwMe != null) {
+            zeroOut(this.shutdownLatch);
+            throw throwMe;
+          }
+
+          this.runLatch = new CountDownLatch(1);
+
         }
       }
     }
-    assert this.startupLatch == null;
+    assert this.bindLatch == null;
   }
 
   private final void waitForAllServersToStop(@Observes @BeforeDestroyed(ApplicationScoped.class)
@@ -345,6 +369,7 @@ public class JerseyNettyExtension implements Extension {
       } catch (final InterruptedException interruptedException) {
         Thread.currentThread().interrupt();
       }
+      assert runLatch.getCount() <= 0;
       this.runLatch = null;
     }
 
@@ -367,8 +392,25 @@ public class JerseyNettyExtension implements Extension {
       } catch (final InterruptedException interruptedException) {
         Thread.currentThread().interrupt();
       }
+      assert shutdownLatch.getCount() <= 0;
       this.shutdownLatch = null;
     }
+
+    DeploymentException throwMe = null;
+    synchronized (this.shutdownProblems) {
+      for (final Throwable shutdownProblem : this.shutdownProblems) {
+        if (throwMe == null) {
+          throwMe = new DeploymentException(shutdownProblem);
+        } else {
+          throwMe.addSuppressed(shutdownProblem);
+        }
+      }
+      this.shutdownProblems.clear();
+    }
+    if (throwMe != null) {
+      throw throwMe;
+    }
+
   }
 
 
@@ -399,30 +441,10 @@ public class JerseyNettyExtension implements Extension {
                    qualifiersArray,
                    lookup,
                    (bm, i, qa) -> {
-                     // TODO: this is probably overkill; just need some config
-                     final Instance<InetSocketAddress> inetSocketAddressInstance;
-                     if (qa == null || qa.length <= 0) {
-                       inetSocketAddressInstance = i.select(InetSocketAddress.class);
-                     } else {
-                       inetSocketAddressInstance = i.select(InetSocketAddress.class, qa);
-                     }
-                     final InetSocketAddress inetSocketAddress;
-                     if (inetSocketAddressInstance == null || inetSocketAddressInstance.isUnsatisfied()) {
-                       inetSocketAddress = null;
-                     } else {
-                       inetSocketAddress = inetSocketAddressInstance.get();
-                     }
-
                      final ServerBootstrap returnValue = new ServerBootstrap();
                      // See https://stackoverflow.com/a/28342821/208288
                      returnValue.group(getEventLoopGroup(bm, i, qa, true));
                      returnValue.channelFactory(getChannelFactory(bm, i, qa, true));
-
-                     if (inetSocketAddress != null) {
-                       returnValue.localAddress(inetSocketAddress);
-                     }
-
-                     // TODO: channel initialization
 
                      // Permit arbitrary customization
                      beanManager.getEvent().select(ServerBootstrap.class, qualifiersArray).fire(returnValue);
@@ -611,14 +633,16 @@ public class JerseyNettyExtension implements Extension {
     final Map<String, String> returnValue = new HashMap<>();
     if (qualifiers != null && !qualifiers.isEmpty()) {
       for (final Annotation qualifier : qualifiers) {
-        if (!(qualifier instanceof Default) && !(qualifier instanceof Any)) {
+        if (qualifier instanceof Named) {
+          returnValue.put("name", ((Named)qualifier).value());
+        } else if (!(qualifier instanceof Default) && !(qualifier instanceof Any)) {
           returnValue.put(qualifier.toString(), "");
         }
       }
     }
     return returnValue;
   }
-  
+
 
   /*
    * Inner and nested classes.
