@@ -94,7 +94,19 @@ import org.microbean.jersey.netty.JerseyChannelInitializer;
 
 public class JerseyNettyExtension implements Extension {
 
+
+  /*
+   * Static fields.
+   */
+
+
   private static final Annotation[] EMPTY_ANNOTATION_ARRAY = new Annotation[0];
+
+
+  /*
+   * Instance fields.
+   */
+
 
   private final Collection<Throwable> shutdownProblems;
 
@@ -106,6 +118,15 @@ public class JerseyNettyExtension implements Extension {
 
   private volatile CountDownLatch shutdownLatch;
 
+
+  /*
+   * Constructors.
+   */
+
+
+  /**
+   * Creates a new {@link JerseyNettyExtension}.
+   */
   public JerseyNettyExtension() {
     super();
     this.shutdownProblems = new ArrayList<>();
@@ -121,6 +142,12 @@ public class JerseyNettyExtension implements Extension {
           }
     }));
   }
+
+
+  /*
+   * Instance methods.
+   */
+
 
   // TODO: prioritize
   private final void onStartup(@Observes @Initialized(ApplicationScoped.class)
