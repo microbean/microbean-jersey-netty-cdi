@@ -6,3 +6,27 @@
 The microBean™ Jersey Netty CDI Integration project integrates
 [Jersey](https://jersey.github.io/) and [Netty](https://netty.io) into
 [CDI 2.0](http://cdi-spec.org/) environments in an idiomatic way.
+
+# Usage
+
+Place this project's `.jar` file and its dependencies on your
+classpath.  Then [start a CDI SE
+container](https://docs.jboss.org/cdi/api/2.0/javax/enterprise/inject/se/SeContainerInitializer.html).
+Any [JAX-RS
+applications](https://jax-rs.github.io/apidocs/2.1/javax/ws/rs/core/Application.html)
+or resource classes found on the classpath will be served up on
+`0.0.0.0` port `8080` by default, or port `443` by default if there is
+an
+[`SslContext`](https://netty.io/4.1/api/io/netty/handler/ssl/SslContext.html)
+available to your CDI container.  You can pass `host` and `port`
+System properties (or source them from any other [microBean™
+Configuration](https://microbean.github.io/microbean-configuration/)
+[`Configuration`](https://microbean.github.io/microbean-configuration/apidocs/org/microbean/configuration/spi/Configuration.html)
+instances) to change your application's endpoint.
+
+HTTP 1.1 and HTTP/2 requests, including upgrades via [HTTP's upgrade
+header](https://svn.tools.ietf.org/svn/wg/httpbis/specs/rfc7230.html#header.upgrade),
+[ALPN](https://www.rfc-editor.org/rfc/rfc7301#page-2) or [prior
+knowledge](https://http2.github.io/http2-spec/#known-http), are fully
+supported.
+

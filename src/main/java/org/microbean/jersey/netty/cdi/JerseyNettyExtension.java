@@ -33,8 +33,6 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 
-import java.util.function.BiFunction;
-
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.context.BeforeDestroyed;
 import javax.enterprise.context.Initialized;
@@ -57,13 +55,11 @@ import javax.inject.Named;
 import javax.ws.rs.ApplicationPath;
 
 import javax.ws.rs.core.Application;
-import javax.ws.rs.core.SecurityContext;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.bootstrap.ServerBootstrapConfig;
 
 import io.netty.channel.ChannelFactory;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.DefaultSelectStrategyFactory;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SelectStrategyFactory;
@@ -72,8 +68,6 @@ import io.netty.channel.ServerChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-
-import io.netty.handler.codec.http.HttpRequest;
 
 import io.netty.handler.ssl.SslContext;
 
@@ -92,6 +86,17 @@ import org.microbean.jaxrs.cdi.JaxRsExtension;
 
 import org.microbean.jersey.netty.JerseyChannelInitializer;
 
+/**
+ * A CDI {@linkplain Extension portable extension} that effectively
+ * puts a <a href="https://netty.io/"
+ * target="_parent">Netty</a>-fronted <a
+ * href="https://jersey.github.io/" target="_parent">Jersey</a>
+ * container inside the {@linkplain
+ * javax.enterprise.inject.se.SeContainer CDI container}.
+ *
+ * @author <a href="https://about.me/lairdnelson"
+ * target="_parent">Laird Nelson</a>
+ */
 public class JerseyNettyExtension implements Extension {
 
 
