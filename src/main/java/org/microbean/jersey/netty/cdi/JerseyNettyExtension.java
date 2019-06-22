@@ -271,12 +271,9 @@ public class JerseyNettyExtension implements Extension {
               }
               assert baseUri != null;
 
-              final BiFunction<? super ChannelHandlerContext, ? super HttpRequest, ? extends SecurityContext> securityContextBiFunction = null; // TODO
-
               serverBootstrap.childHandler(new JerseyChannelInitializer(baseUri,
                                                                         sslContext,
-                                                                        new ApplicationHandler(application),
-                                                                        securityContextBiFunction));
+                                                                        new ApplicationHandler(application)));
               serverBootstrap.validate();
 
               final ServerBootstrapConfig config = serverBootstrap.config();
@@ -455,6 +452,7 @@ public class JerseyNettyExtension implements Extension {
                    SslContext.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> null);
   }
 
@@ -467,6 +465,7 @@ public class JerseyNettyExtension implements Extension {
                    ServerBootstrap.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> {
                      final ServerBootstrap returnValue = new ServerBootstrap();
                      // See https://stackoverflow.com/a/28342821/208288
@@ -490,6 +489,7 @@ public class JerseyNettyExtension implements Extension {
                    },
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> {
                      final SelectorProvider selectorProvider = getSelectorProvider(bm, i, qa, true);
                      assert selectorProvider != null;
@@ -506,6 +506,7 @@ public class JerseyNettyExtension implements Extension {
                    EventLoopGroup.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> {
                      final EventLoopGroup returnValue =
                        new NioEventLoopGroup(0 /* 0 == default number of threads */,
@@ -530,6 +531,7 @@ public class JerseyNettyExtension implements Extension {
                    Executor.class,
                    qualifiersArray,
                    lookup,
+                   false, // do not fall back to @Default one
                    (bm, i, qa) -> null);
   }
 
@@ -542,6 +544,7 @@ public class JerseyNettyExtension implements Extension {
                    RejectedExecutionHandler.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> RejectedExecutionHandlers.reject());
   }
 
@@ -554,6 +557,7 @@ public class JerseyNettyExtension implements Extension {
                    SelectorProvider.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> SelectorProvider.provider());
   }
 
@@ -566,6 +570,7 @@ public class JerseyNettyExtension implements Extension {
                    SelectStrategyFactory.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> DefaultSelectStrategyFactory.INSTANCE);
   }
 
@@ -578,6 +583,7 @@ public class JerseyNettyExtension implements Extension {
                    EventExecutorChooserFactory.class,
                    qualifiersArray,
                    lookup,
+                   true,
                    (bm, i, qa) -> DefaultEventExecutorChooserFactory.INSTANCE);
   }
 
@@ -592,6 +598,7 @@ public class JerseyNettyExtension implements Extension {
                                      final TypeLiteral<T> typeLiteral,
                                      final Annotation[] qualifiersArray,
                                      final boolean lookup,
+                                     final boolean fallbackWithDefaultQualifier,
                                      final DefaultValueFunction<? extends T> defaultValueFunction) {
     Objects.requireNonNull(beanManager);
     Objects.requireNonNull(instance);
@@ -601,10 +608,14 @@ public class JerseyNettyExtension implements Extension {
     final T returnValue;
     final Instance<? extends T> tInstance;
     if (lookup) {
-      if (qualifiersArray == null || qualifiersArray.length <= 0) {
+      if (qualifiersArray == null || qualifiersArray.length <= 0 || (qualifiersArray.length == 1 && qualifiersArray[0] instanceof Default)) {
         tInstance = instance.select(typeLiteral);
       } else {
-        tInstance = instance.select(typeLiteral, qualifiersArray);
+        Instance<? extends T> temp = instance.select(typeLiteral, qualifiersArray);
+        if (fallbackWithDefaultQualifier && (temp == null || temp.isUnsatisfied())) {
+          temp = instance.select(typeLiteral);
+        }
+        tInstance = temp;
       }
     } else {
       tInstance = null;
@@ -622,6 +633,7 @@ public class JerseyNettyExtension implements Extension {
                                      final Class<T> cls,
                                      final Annotation[] qualifiersArray,
                                      final boolean lookup,
+                                     final boolean fallbackWithDefaultQualifier,
                                      final DefaultValueFunction<? extends T> defaultValueFunction) {
     Objects.requireNonNull(beanManager);
     Objects.requireNonNull(instance);
@@ -631,10 +643,14 @@ public class JerseyNettyExtension implements Extension {
     final T returnValue;
     final Instance<? extends T> tInstance;
     if (lookup) {
-      if (qualifiersArray == null || qualifiersArray.length <= 0) {
+      if (qualifiersArray == null || qualifiersArray.length <= 0 || (qualifiersArray.length == 1 && qualifiersArray[0] instanceof Default)) {
         tInstance = instance.select(cls);
       } else {
-        tInstance = instance.select(cls, qualifiersArray);
+        Instance<? extends T> temp = instance.select(cls, qualifiersArray);
+        if (fallbackWithDefaultQualifier && (temp == null || temp.isUnsatisfied())) {
+          temp = instance.select(cls);
+        }
+        tInstance = temp;
       }
     } else {
       tInstance = null;
