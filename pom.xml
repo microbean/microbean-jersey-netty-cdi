@@ -55,7 +55,7 @@
       <dependency>
         <groupId>io.netty</groupId>
         <artifactId>netty-bom</artifactId>
-        <version>4.1.39.Final</version>
+        <version>4.1.41.Final</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -82,7 +82,7 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jersey-netty</artifactId>
-        <version>0.9.0</version>
+        <version>0.9.1</version>
         <type>jar</type>
       </dependency>
 
