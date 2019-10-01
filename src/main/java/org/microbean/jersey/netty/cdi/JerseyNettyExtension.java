@@ -33,6 +33,9 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.context.BeforeDestroyed;
 import javax.enterprise.context.Initialized;
@@ -113,6 +116,8 @@ public class JerseyNettyExtension implements Extension {
    */
 
 
+  private final Logger logger;
+
   private final Collection<Throwable> shutdownProblems;
 
   private volatile Collection<EventExecutorGroup> eventExecutorGroups;
@@ -131,21 +136,71 @@ public class JerseyNettyExtension implements Extension {
 
   /**
    * Creates a new {@link JerseyNettyExtension}.
+   *
+   * <p>Instances of this class are normally created by CDI, not by an
+   * end user.</p>
    */
   public JerseyNettyExtension() {
     super();
+    final String cn = this.getClass().getName();
+    final Logger logger = this.createLogger();
+    if (logger == null) {
+      this.logger = Logger.getLogger(cn);
+    } else {
+      this.logger = logger;
+    }
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.entering(cn, "<init>");
+    }
+
     this.shutdownProblems = new ArrayList<>();
     final Thread containerThread = Thread.currentThread();
     Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+          if (logger.isLoggable(Level.FINER)) {
+            logger.entering(JerseyNettyExtension.this.getClass().getName(), "<shutdown hook>");
+          }
+
+          // Logging once a shutdown hook has been invoked can just
+          // stop working because the LogManager actually runs its own
+          // shutdown hook in parallel that starts closing handlers.
+          // See the following links for more details:
+          // * https://bugs.openjdk.java.net/browse/JDK-8161253
+          // * https://bugs.openjdk.java.net/browse/JDK-8029834
+          // * https://github.com/openjdk/jdk/blob/6734ec66c34642920788c86b62a36e4195676b6d/src/java.logging/share/classes/java/util/logging/LogManager.java#L256-L284
+          // There is nothing we can do about this.
+
           zeroOut(this.runLatch);
           zeroOut(this.bindLatch);
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE,
+                        JerseyNettyExtension.this.getClass().getName(),
+                        "<shutdown hook>",
+                        "Interrupting CDI container thread");
+          }
+          // Notify the container thread that we're going down.
           containerThread.interrupt();
           try {
+            if (logger.isLoggable(Level.FINE)) {
+              logger.logp(Level.FINE,
+                          JerseyNettyExtension.this.getClass().getName(),
+                          "<shutdown hook>",
+                          "Waiting for CDI container thread to complete");
+            }
+            // Keep this shutdown hook thread alive until the
+            // container goes down cleanly.
             containerThread.join();
           } catch (final InterruptedException interruptedException) {
             Thread.currentThread().interrupt();
           }
+
+          if (logger.isLoggable(Level.FINER)) {
+            logger.exiting(JerseyNettyExtension.this.getClass().getName(), "<shutdown hook>");
+          }
     }));
+
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.exiting(cn, "<init>");
+    }
   }
 
 
@@ -154,11 +209,34 @@ public class JerseyNettyExtension implements Extension {
    */
 
 
+  /**
+   * Creates a {@link Logger} when invoked.
+   *
+   * <p>The default implementation of this method returns the result
+   * of invoking {@link Logger#getLogger(String)
+   * Logger.getLogger(this.getClass().getName())}.</p>
+   *
+   * <p>This method never returns {@code null}.</p>
+   *
+   * <p>Overrides of this method must not return {@code null}.</p>
+   *
+   * @return a non-{@code null} {@link Logger}
+   */
+  protected Logger createLogger() {
+    return Logger.getLogger(this.getClass().getName());
+  }
+
   // TODO: prioritize
   private final void onStartup(@Observes @Initialized(ApplicationScoped.class)
                                final Object event,
                                final BeanManager beanManager)
     throws URISyntaxException {
+    final String cn = this.getClass().getName();
+    final String mn = "onStartup";
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.entering(cn, mn, new Object[] { event, beanManager });
+    }
+
     if (beanManager != null) {
       final JaxRsExtension extension = beanManager.getExtension(JaxRsExtension.class);
       if (extension != null) {
@@ -193,6 +271,9 @@ public class JerseyNettyExtension implements Extension {
             // Be particularly mindful later on of the state of the
             // latches.
             if (Thread.currentThread().isInterrupted()) {
+              if (this.logger.isLoggable(Level.FINE)) {
+                this.logger.logp(Level.FINE, cn, mn, "Not binding because the current thread has been interrupted");
+              }
               zeroOut(this.bindLatch);
               this.bindLatch = null;
               break;
@@ -281,15 +362,22 @@ public class JerseyNettyExtension implements Extension {
                                                                         new ApplicationHandler(application)));
               serverBootstrap.validate();
 
-              final ServerBootstrapConfig config = serverBootstrap.config();
-              assert config != null;
+              final ServerBootstrapConfig serverBootstrapConfig = serverBootstrap.config();
+              assert serverBootstrapConfig != null;
 
-              final EventLoopGroup group = config.group();
-              assert group != null; // see validate() above
-              group.terminationFuture()
+              final EventLoopGroup eventLoopGroup = serverBootstrapConfig.group();
+              assert eventLoopGroup != null; // see validate() above
+              eventLoopGroup.terminationFuture()
                 .addListener(f -> {
                     try {
-                      if (!f.isSuccess()) {
+                      if (f.isSuccess()) {
+                        if (logger.isLoggable(Level.FINE)) {
+                          logger.logp(Level.FINE, cn, "<ChannelFuture listener>", "EventLoopGroup terminated successfully");
+                        }
+                      } else {
+                        if (logger.isLoggable(Level.FINE)) {
+                          logger.logp(Level.FINE, cn, "<ChannelFuture listener>", "EventLoopGroup terminated with problems: {0}", f.cause());
+                        }
                         final Throwable throwable = f.cause();
                         if (throwable != null) {
                           synchronized (this.shutdownProblems) {
@@ -298,6 +386,11 @@ public class JerseyNettyExtension implements Extension {
                         }
                       }
                     } finally {
+                      if (logger.isLoggable(Level.FINE)) {
+                        logger.logp(Level.FINE, cn, "<ChannelFuture listener>", "Counting down shutdownLatch");
+                      }
+                      // See the waitForAllServersToStop() method
+                      // below which calls await() on this latch.
                       this.shutdownLatch.countDown();
                     }
                   });
@@ -308,19 +401,35 @@ public class JerseyNettyExtension implements Extension {
                 this.eventExecutorGroups = eventExecutorGroups;
               }
               synchronized (eventExecutorGroups) {
-                eventExecutorGroups.add(group);
+                eventExecutorGroups.add(eventLoopGroup);
               }
 
               final Future<?> bindFuture;
-              if (config.localAddress() == null) {
+              if (Thread.currentThread().isInterrupted()) {
+                // Don't bother binding.
+                bindFuture = null;
+                final CountDownLatch bindLatch = this.bindLatch;
+                if (bindLatch != null) {
+                  zeroOut(bindLatch);
+                  this.bindLatch = null;
+                }
+              } else if (serverBootstrapConfig.localAddress() == null) {
                 bindFuture = serverBootstrap.bind(baseUri.getHost(), baseUri.getPort());
               } else {
                 bindFuture = serverBootstrap.bind();
               }
-              bindFuture.addListener(f -> {
+              if (bindFuture != null) {
+                bindFuture.addListener(f -> {
                     try {
-                      if (!f.isSuccess()) {
+                      if (f.isSuccess()) {
+                        if (logger.isLoggable(Level.FINE)) {
+                          logger.logp(Level.FINE, cn, "<ChannelFuture listener>", "ServerBootstrap bound successfully");
+                        }
+                      } else {
                         final Throwable throwable = f.cause();
+                        if (logger.isLoggable(Level.WARNING)) {
+                          logger.logp(Level.WARNING, cn, "<ChannelFuture listener>", "ServerBootstrap binding failed: {0}", throwable);
+                        }
                         if (throwable != null) {
                           synchronized (bindProblems) {
                             bindProblems.add(throwable);
@@ -328,12 +437,16 @@ public class JerseyNettyExtension implements Extension {
                         }
                       }
                     } finally {
-                      final CountDownLatch latch = this.bindLatch;
-                      if (latch != null) {
-                        latch.countDown();
+                      final CountDownLatch bindLatch = this.bindLatch;
+                      if (bindLatch != null) {
+                        if (logger.isLoggable(Level.FINE)) {
+                          logger.logp(Level.FINE, cn, "<ChannelFuture listener>", "Counting down bindLatch");
+                        }
+                        bindLatch.countDown();
                       }
                     }
                   });
+              }
 
             } catch (final RuntimeException | URISyntaxException throwMe) {
               zeroOut(this.bindLatch);
@@ -348,15 +461,25 @@ public class JerseyNettyExtension implements Extension {
 
           }
 
-          final CountDownLatch bindLatch = this.bindLatch;
-          if (bindLatch != null) {
+          CountDownLatch bindLatch = this.bindLatch;
+          if (!Thread.currentThread().isInterrupted() && bindLatch != null && bindLatch.getCount() > 0) {
             try {
+              if (logger.isLoggable(Level.FINE)) {
+                logger.logp(Level.FINE, cn, mn, "Awaiting bindLatch");
+              }
               bindLatch.await();
+              if (logger.isLoggable(Level.FINE)) {
+                logger.logp(Level.FINE, cn, mn, "bindLatch released");
+              }
             } catch (final InterruptedException interruptedException) {
+              if (logger.isLoggable(Level.FINE)) {
+                logger.logp(Level.FINE, cn, mn, "bindLatch.await() interrupted");
+              }
               Thread.currentThread().interrupt();
+              zeroOut(bindLatch);
+              bindLatch = null;
+              this.bindLatch = null;
             }
-            assert bindLatch.getCount() <= 0;
-            this.bindLatch = null;
           }
 
           DeploymentException throwMe = null;
@@ -375,51 +498,113 @@ public class JerseyNettyExtension implements Extension {
             throw throwMe;
           }
 
-          this.runLatch = new CountDownLatch(1);
+          if (bindLatch != null) {
+            // If we get here with a non-null bindLatch, then a
+            // binding attempt was made and allowed to run to
+            // completion.  The completion was successful, because
+            // otherwise we would have thrown an exception.
+            assert bindLatch.getCount() <= 0;
+            this.bindLatch = null;
+
+            // Since we know that binding happened and wasn't
+            // interrupted and didn't fail, we can now create the
+            // runLatch, which will be awaited in the
+            // waitForAllServersToStop() method below.
+            if (this.logger.isLoggable(Level.FINE)) {
+              this.logger.logp(Level.FINE, cn, mn, "Creating runLatch");
+            }
+            this.runLatch = new CountDownLatch(1);
+          }
 
         }
       }
     }
     assert this.bindLatch == null;
+
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.exiting(cn, mn);
+    }
   }
 
   private final void waitForAllServersToStop(@Observes @BeforeDestroyed(ApplicationScoped.class)
                                              final Object event) {
+    final String cn = this.getClass().getName();
+    final String mn = "waitForAllServersToStop";
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.entering(cn, mn, event);
+    }
 
-    // Note: somewhat interestingly, Weld can fire a @BeforeDestroyed
-    // event on a thread that is not the container thread: a shutdown
-    // hook that it installs.  So we have to take care to be thread
-    // safe.
+    // Note: Weld can fire a @BeforeDestroyed event on a thread that
+    // is not the container thread: a shutdown hook that it installs.
+    // So we have to take care to be thread safe.
 
-    final CountDownLatch runLatch = this.runLatch;
+    CountDownLatch runLatch = this.runLatch;
     if (runLatch != null) {
-      try {
-        runLatch.await();
-      } catch (final InterruptedException interruptedException) {
-        Thread.currentThread().interrupt();
+      if (Thread.currentThread().isInterrupted()) {
+        zeroOut(runLatch);
+      } else {
+        try {
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "Awaiting runLatch");
+          }
+          runLatch.await();
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "runLatch released");
+          }
+        } catch (final InterruptedException interruptedException) {
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "runLatch.await() interrupted");
+          }
+          Thread.currentThread().interrupt();
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "Zeroing out runLatch");
+          }
+          zeroOut(runLatch);
+        }
       }
       assert runLatch.getCount() <= 0;
+      runLatch = null;
       this.runLatch = null;
     }
 
-    final Collection<EventExecutorGroup> eventExecutorGroups = this.eventExecutorGroups;
+    final Collection<? extends EventExecutorGroup> eventExecutorGroups = this.eventExecutorGroups;
     if (eventExecutorGroups != null) {
       synchronized (eventExecutorGroups) {
-        for (final EventExecutorGroup group : eventExecutorGroups) {
-          // idempotent
-          group.shutdownGracefully();
+        if (!eventExecutorGroups.isEmpty()) {
+          for (final EventExecutorGroup eventExecutorGroup : eventExecutorGroups) {
+            if (logger.isLoggable(Level.FINE)) {
+              logger.logp(Level.FINE, cn, mn, "Shutting down {0} gracefully", eventExecutorGroup);
+            }
+            // idempotent and will trigger shutdownLatch.countDown()
+            // TODO: look up quietPeriod and shutdownTimeout
+            // parameters and use the three-argument form of this
+            // method
+            eventExecutorGroup.shutdownGracefully();
+          }
+          eventExecutorGroups.clear();
         }
-        eventExecutorGroups.clear();
       }
       this.eventExecutorGroups = null;
     }
 
     final CountDownLatch shutdownLatch = this.shutdownLatch;
     if (shutdownLatch != null) {
-      try {
-        shutdownLatch.await();
-      } catch (final InterruptedException interruptedException) {
-        Thread.currentThread().interrupt();
+      while (shutdownLatch.getCount() > 0) {
+        try {
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "Awaiting shutdownLatch");
+          }
+          // Wait for the EventExecutorGroup ChannelFuture to complete
+          // and call shutdownLatch.countDown().
+          shutdownLatch.await();
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "shutdownLatch released");
+          }
+        } catch (final InterruptedException interruptedException) {
+          if (logger.isLoggable(Level.FINE)) {
+            logger.logp(Level.FINE, cn, mn, "shutdownLatch.await() interrupted");
+          }
+        }
       }
       assert shutdownLatch.getCount() <= 0;
       this.shutdownLatch = null;
@@ -440,6 +625,9 @@ public class JerseyNettyExtension implements Extension {
       throw throwMe;
     }
 
+    if (this.logger.isLoggable(Level.FINER)) {
+      this.logger.exiting(cn, mn);
+    }
   }
 
 
