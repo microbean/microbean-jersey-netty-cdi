@@ -18,6 +18,8 @@ package org.microbean.jersey.netty.cdi;
 
 import java.lang.annotation.Annotation;
 
+import java.lang.reflect.Type;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 
@@ -48,7 +50,6 @@ import javax.enterprise.event.Observes;
 
 import javax.enterprise.inject.Any;
 import javax.enterprise.inject.Default;
-import javax.enterprise.inject.Instance;
 
 import javax.enterprise.inject.spi.Bean;
 import javax.enterprise.inject.spi.BeanManager;
@@ -132,7 +133,7 @@ public class JerseyNettyExtension implements Extension {
 
   private volatile CountDownLatch shutdownLatch;
 
-  private volatile CreationalContext<Application> cc;
+  private volatile CreationalContext<?> cc;
 
 
   /*
@@ -302,14 +303,12 @@ public class JerseyNettyExtension implements Extension {
     final Set<Set<Annotation>> applicationQualifierSets = extension.getAllApplicationQualifiers();
     if (applicationQualifierSets != null && !applicationQualifierSets.isEmpty()) {
 
-      final CreationalContext<Application> cc = beanManager.createCreationalContext(null);
+      final CreationalContext<?> cc = beanManager.createCreationalContext(null);
       assert cc != null;
       this.cc = cc;
 
-      final Instance<Object> instance = beanManager.createInstance();
-      assert instance != null;
-
-      final Configurations configurations = instance.select(Configurations.class).get();
+      final Configurations configurations = acquire(beanManager, cc, Configurations.class);
+      assert configurations != null;
 
       final Map<String, String> baseConfigurationCoordinates = configurations.getConfigurationCoordinates();
 
@@ -373,10 +372,10 @@ public class JerseyNettyExtension implements Extension {
           }
           assert applicationPath != null;
 
-          final ServerBootstrap serverBootstrap = getServerBootstrap(beanManager, instance, applicationQualifiersArray, true);
+          final ServerBootstrap serverBootstrap = getServerBootstrap(beanManager, cc, applicationQualifiersArray);
           assert serverBootstrap != null;
 
-          final SslContext sslContext = getSslContext(beanManager, instance, applicationQualifiersArray, true);
+          final SslContext sslContext = getSslContext(beanManager, cc, applicationQualifiersArray);
 
           final Map<String, String> qualifierCoordinates = toConfigurationCoordinates(applicationQualifiers);
           final Map<String, String> configurationCoordinates;
@@ -663,7 +662,7 @@ public class JerseyNettyExtension implements Extension {
       this.shutdownLatch = null;
     }
 
-    final CreationalContext<Application> cc = this.cc;
+    final CreationalContext<?> cc = this.cc;
     if (cc != null) {
       cc.release();
     }
@@ -695,33 +694,29 @@ public class JerseyNettyExtension implements Extension {
 
 
   private static final SslContext getSslContext(final BeanManager beanManager,
-                                                          final Instance<Object> instance,
-                                                          final Annotation[] qualifiersArray,
-                                                          final boolean lookup) {
+                                                final CreationalContext<?> cc,
+                                                final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    SslContext.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> null);
+                   (bm, cctx, qa) -> null);
   }
 
   private static final ServerBootstrap getServerBootstrap(final BeanManager beanManager,
-                                                          final Instance<Object> instance,
-                                                          final Annotation[] qualifiersArray,
-                                                          final boolean lookup) {
+                                                          final CreationalContext<?> cc,
+                                                          final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    ServerBootstrap.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> {
+                   (bm, cctx, qa) -> {
                      final ServerBootstrap returnValue = new ServerBootstrap();
                      // See https://stackoverflow.com/a/28342821/208288
-                     returnValue.group(getEventLoopGroup(bm, i, qa, true));
-                     returnValue.channelFactory(getChannelFactory(bm, i, qa, true));
+                     returnValue.group(getEventLoopGroup(bm, cctx, qa));
+                     returnValue.channelFactory(getChannelFactory(bm, cctx, qa));
 
                      // Permit arbitrary customization
                      beanManager.getEvent().select(ServerBootstrap.class, qualifiersArray).fire(returnValue);
@@ -730,42 +725,38 @@ public class JerseyNettyExtension implements Extension {
   }
 
   private static final ChannelFactory<? extends ServerChannel> getChannelFactory(final BeanManager beanManager,
-                                                                                 final Instance<Object> instance,
-                                                                                 final Annotation[] qualifiersArray,
-                                                                                 final boolean lookup) {
+                                                                                 final CreationalContext<?> cc,
+                                                                                 final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    new TypeLiteral<ChannelFactory<? extends ServerChannel>>() {
                      private static final long serialVersionUID = 1L;
-                   },
+                   }.getType(),
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> {
-                     final SelectorProvider selectorProvider = getSelectorProvider(bm, i, qa, true);
+                   (bm, cctx, qa) -> {
+                     final SelectorProvider selectorProvider = getSelectorProvider(bm, cctx, qa);
                      assert selectorProvider != null;
                      return () -> new NioServerSocketChannel(selectorProvider);
                    });
   }
 
   private static final EventLoopGroup getEventLoopGroup(final BeanManager beanManager,
-                                                        final Instance<Object> instance,
-                                                        final Annotation[] qualifiersArray,
-                                                        final boolean lookup) {
+                                                        final CreationalContext<?> cc,
+                                                        final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    EventLoopGroup.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> {
+                   (bm, cctx, qa) -> {
                      final EventLoopGroup returnValue =
                        new NioEventLoopGroup(0 /* 0 == default number of threads */,
-                                             getExecutor(bm, i, qa, true), // null is OK
-                                             getEventExecutorChooserFactory(bm, i, qa, true),
-                                             getSelectorProvider(bm, i, qa, true),
-                                             getSelectStrategyFactory(bm, i, qa, true),
-                                             getRejectedExecutionHandler(bm, i, qa, true));
+                                             getExecutor(bm, cctx, qa), // null is OK
+                                             getEventExecutorChooserFactory(bm, cctx, qa),
+                                             getSelectorProvider(bm, cctx, qa),
+                                             getSelectStrategyFactory(bm, cctx, qa),
+                                             getRejectedExecutionHandler(bm, cctx, qa));
                      // Permit arbitrary customization.  (Not much you can do here
                      // except call setIoRatio(int).)
                      beanManager.getEvent().select(EventLoopGroup.class, qa).fire(returnValue);
@@ -774,68 +765,58 @@ public class JerseyNettyExtension implements Extension {
   }
 
   private static final Executor getExecutor(final BeanManager beanManager,
-                                            final Instance<Object> instance,
-                                            final Annotation[] qualifiersArray,
-                                            final boolean lookup) {
+                                            final CreationalContext<?> cc,
+                                            final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    Executor.class,
                    qualifiersArray,
-                   lookup,
                    false, // do not fall back to @Default one
-                   (bm, i, qa) -> null);
+                   (bm, cctx, qa) -> null);
   }
 
   private static final RejectedExecutionHandler getRejectedExecutionHandler(final BeanManager beanManager,
-                                                                            final Instance<Object> instance,
-                                                                            final Annotation[] qualifiersArray,
-                                                                            final boolean lookup) {
+                                                                            final CreationalContext<?> cc,
+                                                                            final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    RejectedExecutionHandler.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> RejectedExecutionHandlers.reject());
+                   (bm, cctx, qa) -> RejectedExecutionHandlers.reject());
   }
 
   private static final SelectorProvider getSelectorProvider(final BeanManager beanManager,
-                                                            final Instance<Object> instance,
-                                                            final Annotation[] qualifiersArray,
-                                                            final boolean lookup) {
+                                                            final CreationalContext<?> cc,
+                                                            final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    SelectorProvider.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> SelectorProvider.provider());
+                   (bm, cctx, qa) -> SelectorProvider.provider());
   }
 
   private static final SelectStrategyFactory getSelectStrategyFactory(final BeanManager beanManager,
-                                                                      final Instance<Object> instance,
-                                                                      final Annotation[] qualifiersArray,
-                                                                      final boolean lookup) {
+                                                                      final CreationalContext<?> cc,
+                                                                      final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    SelectStrategyFactory.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> DefaultSelectStrategyFactory.INSTANCE);
+                   (bm, cctx, qa) -> DefaultSelectStrategyFactory.INSTANCE);
   }
 
   private static final EventExecutorChooserFactory getEventExecutorChooserFactory(final BeanManager beanManager,
-                                                                                  final Instance<Object> instance,
-                                                                                  final Annotation[] qualifiersArray,
-                                                                                  final boolean lookup) {
+                                                                                  final CreationalContext<?> cc,
+                                                                                  final Annotation[] qualifiersArray) {
     return acquire(beanManager,
-                   instance,
+                   cc,
                    EventExecutorChooserFactory.class,
                    qualifiersArray,
-                   lookup,
                    true,
-                   (bm, i, qa) -> DefaultEventExecutorChooserFactory.INSTANCE);
+                   (bm, cctx, qa) -> DefaultEventExecutorChooserFactory.INSTANCE);
   }
 
 
@@ -845,72 +826,45 @@ public class JerseyNettyExtension implements Extension {
 
 
   private static final <T> T acquire(final BeanManager beanManager,
-                                     final Instance<Object> instance,
-                                     final TypeLiteral<T> typeLiteral,
-                                     final Annotation[] qualifiersArray,
-                                     final boolean lookup,
-                                     final boolean fallbackWithDefaultQualifier,
-                                     final DefaultValueFunction<? extends T> defaultValueFunction) {
-    Objects.requireNonNull(beanManager);
-    Objects.requireNonNull(instance);
-    Objects.requireNonNull(typeLiteral);
-    Objects.requireNonNull(defaultValueFunction);
-
-    final T returnValue;
-    final Instance<? extends T> tInstance;
-    if (lookup) {
-      if (qualifiersArray == null || qualifiersArray.length <= 0 || (qualifiersArray.length == 1 && qualifiersArray[0] instanceof Default)) {
-        tInstance = instance.select(typeLiteral);
-      } else {
-        Instance<? extends T> temp = instance.select(typeLiteral, qualifiersArray);
-        if (fallbackWithDefaultQualifier && (temp == null || temp.isUnsatisfied())) {
-          temp = instance.select(typeLiteral);
-        }
-        tInstance = temp;
-      }
-    } else {
-      tInstance = null;
-    }
-    if (tInstance == null || tInstance.isUnsatisfied()) {
-      returnValue = defaultValueFunction.getDefaultValue(beanManager, instance, qualifiersArray);
-    } else {
-      returnValue = tInstance.get();
-    }
-    return returnValue;
+                                     final CreationalContext<?> cc,
+                                     final Type type) {
+    return acquire(beanManager, cc, type, null, false, (bm, cctx, qa) -> null);
   }
 
   private static final <T> T acquire(final BeanManager beanManager,
-                                     final Instance<Object> instance,
-                                     final Class<T> cls,
+                                     final CreationalContext<?> cc,
+                                     final Type type,
                                      final Annotation[] qualifiersArray,
-                                     final boolean lookup,
                                      final boolean fallbackWithDefaultQualifier,
                                      final DefaultValueFunction<? extends T> defaultValueFunction) {
     Objects.requireNonNull(beanManager);
-    Objects.requireNonNull(instance);
-    Objects.requireNonNull(cls);
+    Objects.requireNonNull(type);
     Objects.requireNonNull(defaultValueFunction);
 
     final T returnValue;
-    final Instance<? extends T> tInstance;
-    if (lookup) {
-      if (qualifiersArray == null || qualifiersArray.length <= 0 || (qualifiersArray.length == 1 && qualifiersArray[0] instanceof Default)) {
-        tInstance = instance.select(cls);
-      } else {
-        Instance<? extends T> temp = instance.select(cls, qualifiersArray);
-        if (fallbackWithDefaultQualifier && (temp == null || temp.isUnsatisfied())) {
-          temp = instance.select(cls);
-        }
-        tInstance = temp;
+
+    Set<Bean<?>> beans = null;
+    if (qualifiersArray == null || qualifiersArray.length <= 0 || (qualifiersArray.length == 1 && qualifiersArray[0] instanceof Default)) {
+      beans = beanManager.getBeans(type);
+    } else {
+      beans = beanManager.getBeans(type, qualifiersArray);
+      if (fallbackWithDefaultQualifier && (beans == null || beans.isEmpty())) {
+        beans = beanManager.getBeans(type);
       }
-    } else {
-      tInstance = null;
     }
-    if (tInstance == null || tInstance.isUnsatisfied()) {
-      returnValue = defaultValueFunction.getDefaultValue(beanManager, instance, qualifiersArray);
+    if (beans == null || beans.isEmpty()) {
+      returnValue = defaultValueFunction.getDefaultValue(beanManager, cc, qualifiersArray);
     } else {
-      returnValue = tInstance.get();
+      final Bean<?> bean = beanManager.resolve(beans);
+      if (bean == null) {
+        returnValue = defaultValueFunction.getDefaultValue(beanManager, cc, qualifiersArray);
+      } else {
+        @SuppressWarnings("unchecked")
+        final T temp = (T)beanManager.getReference(bean, type, cc);
+        returnValue = temp;
+      }
     }
+
     return returnValue;
   }
 
@@ -947,7 +901,7 @@ public class JerseyNettyExtension implements Extension {
   private static interface DefaultValueFunction<T> {
 
     T getDefaultValue(final BeanManager beanManager,
-                      final Instance<Object> instance,
+                      final CreationalContext<?> cc,
                       final Annotation[] qualifiersArray);
 
   }
