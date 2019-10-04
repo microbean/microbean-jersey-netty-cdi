@@ -51,6 +51,7 @@ import javax.enterprise.event.Observes;
 import javax.enterprise.inject.Any;
 import javax.enterprise.inject.Default;
 
+import javax.enterprise.inject.spi.Annotated;
 import javax.enterprise.inject.spi.Bean;
 import javax.enterprise.inject.spi.BeanManager;
 import javax.enterprise.inject.spi.DeploymentException;
@@ -363,7 +364,10 @@ public class JerseyNettyExtension implements Extension {
           final Application application = (Application)beanManager.getReference(applicationBean, Application.class, cc);
           assert application != null;
 
-          final ApplicationPath applicationPathAnnotation = application.getClass().getAnnotation(ApplicationPath.class);
+          final Annotated applicationType = beanManager.createAnnotatedType(application.getClass());
+          assert applicationType != null;
+          
+          final ApplicationPath applicationPathAnnotation = applicationType.getAnnotation(ApplicationPath.class);
           final String applicationPath;
           if (applicationPathAnnotation == null) {
             applicationPath = "/";
@@ -421,7 +425,7 @@ public class JerseyNettyExtension implements Extension {
           assert serverBootstrapConfig != null;
 
           final EventLoopGroup eventLoopGroup = serverBootstrapConfig.group();
-          assert eventLoopGroup != null; // see validate() above
+          assert eventLoopGroup != null; // see serverBootstrap.validate() above, which guarantees this
           eventLoopGroup.terminationFuture()
             .addListener(f -> {
                 try {

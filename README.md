@@ -14,10 +14,10 @@ Add this project as a `runtime`-scoped dependency in your CDI 2.0-based Maven pr
 <dependency>
   <groupId>org.microbean</groupId>
   <artifactId>microbean-jersey-netty-cdi</artifactId>
-  <version>0.2.7</version>
+  <version>0.2.8</version>
   <scope>runtime</scope>
 </dependency>
-
+```
 Then [start a CDI SE
 container](https://docs.jboss.org/cdi/api/2.0/javax/enterprise/inject/se/SeContainerInitializer.html).
 Any [JAX-RS
