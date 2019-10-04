@@ -28,7 +28,7 @@
       <div id="breadcrumbs">
         <ul class="breadcrumb">
         <li id="publishDate">Last Published: 2019-10-03</li>
-      <li id="projectVersion" class="pull-right">Version: 0.2.6</li>
+      <li id="projectVersion" class="pull-right">Version: 0.2.7</li>
         </ul>
       </div>
       <div class="row-fluid">
@@ -75,9 +75,47 @@
 <h1>microBean&#x2122; Jersey Netty CDI Integration</h1>
 <p><a class="externalLink" href="https://travis-ci.com/microbean/microbean-jersey-netty-cdi"><img src="https://travis-ci.com/microbean/microbean-jersey-netty-cdi.svg?branch=master" alt="Build Status" /></a> <a class="externalLink" href="https://maven-badges.herokuapp.com/maven-central/org.microbean/microbean-jersey-netty-cdi"><img src="https://maven-badges.herokuapp.com/maven-central/org.microbean/microbean-jersey-netty-cdi/badge.svg" alt="Maven Central" /></a></p>
 <p>The microBean&#x2122; Jersey Netty CDI Integration project integrates <a class="externalLink" href="https://jersey.github.io/">Jersey</a> and <a class="externalLink" href="https://netty.io">Netty</a> into <a class="externalLink" href="http://cdi-spec.org/">CDI 2.0</a> environments in an idiomatic way.</p>
-<h1>Usage</h1>
-<p>Place this project&#x2019;s <tt>.jar</tt> file and its dependencies on your classpath.  Then <a class="externalLink" href="https://docs.jboss.org/cdi/api/2.0/javax/enterprise/inject/se/SeContainerInitializer.html">start a CDI SE container</a>. Any <a class="externalLink" href="https://jax-rs.github.io/apidocs/2.1/javax/ws/rs/core/Application.html">JAX-RS applications</a> or resource classes found on the classpath will be served up on <tt>0.0.0.0</tt> port <tt>8080</tt> by default, or port <tt>443</tt> by default if there is an <a class="externalLink" href="https://netty.io/4.1/api/io/netty/handler/ssl/SslContext.html"><tt>SslContext</tt></a> available to your CDI container.  You can pass <tt>host</tt> and <tt>port</tt> System properties (or source them from any other <a class="externalLink" href="https://microbean.github.io/microbean-configuration/">microBean&#x2122; Configuration</a> <a class="externalLink" href="https://microbean.github.io/microbean-configuration/apidocs/org/microbean/configuration/spi/Configuration.html"><tt>Configuration</tt></a> instances) to change your application&#x2019;s endpoint.</p>
-<p>HTTP 1.1 and HTTP/2 requests, including upgrades via <a class="externalLink" href="https://svn.tools.ietf.org/svn/wg/httpbis/specs/rfc7230.html#header.upgrade">HTTP&#x2019;s upgrade header</a>, <a class="externalLink" href="https://www.rfc-editor.org/rfc/rfc7301#page-2">ALPN</a> or <a class="externalLink" href="https://http2.github.io/http2-spec/#known-http">prior knowledge</a>, are fully supported.</p>
+<div class="section">
+<h2><a name="Installation_and_Usage"></a>Installation and Usage</h2>
+<p>Add this project as a <tt>runtime</tt>-scoped dependency in your CDI 2.0-based Maven project:</p>
+
+<div>
+<div>
+<pre class="source">&lt;dependency&gt;
+  &lt;groupId&gt;org.microbean&lt;/groupId&gt;
+  &lt;artifactId&gt;microbean-jersey-netty-cdi&lt;/artifactId&gt;
+  &lt;version&gt;0.2.7&lt;/version&gt;
+  &lt;scope&gt;runtime&lt;/scope&gt;
+&lt;/dependency&gt;
+
+Then [start a CDI SE
+container](https://docs.jboss.org/cdi/api/2.0/javax/enterprise/inject/se/SeContainerInitializer.html).
+Any [JAX-RS
+applications](https://jax-rs.github.io/apidocs/2.1/javax/ws/rs/core/Application.html)
+or resource classes found on the classpath will be served up by [Eclipse Jersey](https://projects.eclipse.org/projects/ee4j.jersey) and [Netty](https://netty.io/) on
+`0.0.0.0` port `8080` by default, or port `443` by default if there is
+an
+[`SslContext`](https://netty.io/4.1/api/io/netty/handler/ssl/SslContext.html)
+available to your CDI container.  You can pass `host` and `port`
+System properties (or source them from any other [microBean&#x2122;
+Configuration](https://microbean.github.io/microbean-configuration/)
+[`Configuration`](https://microbean.github.io/microbean-configuration/apidocs/org/microbean/configuration/spi/Configuration.html)
+instances) to change your application's endpoint.
+
+HTTP 1.1 and HTTP/2 requests, including upgrades via [HTTP's upgrade
+header](https://svn.tools.ietf.org/svn/wg/httpbis/specs/rfc7230.html#header.upgrade),
+[ALPN](https://www.rfc-editor.org/rfc/rfc7301#page-2) or [prior
+knowledge](https://http2.github.io/http2-spec/#known-http), are fully
+supported.
+
+## Related Projects
+
+* [microBean&#x2122; Jersey Netty Integration](https://microbean.github.io/microbean-jersey-netty/)
+* [microBean&#x2122; Jakarta RESTful Web Services CDI Integration](https://microbean.github.io/microbean-jaxrs-cdi/)
+* [microBean&#x2122; Configuration API](https://microbean.github.io/microbean-configuration-api/)
+* [microBean&#x2122; Configuration](https://microbean.github.io/microbean-configuration/)
+* [microBean&#x2122; Configuration CDI](https://microbean.github.io/microbean-configuration-cdi/)
+</pre></div></div></div>
         </div>
       </div>
     </div>
