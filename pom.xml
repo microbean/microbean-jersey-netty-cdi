@@ -67,14 +67,14 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jaxrs-cdi</artifactId>
-        <version>0.1.6</version>
+        <version>0.1.7</version>
         <type>jar</type>
       </dependency>
 
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jersey-netty</artifactId>
-        <version>0.9.2</version>
+        <version>0.9.3</version>
         <type>jar</type>
       </dependency>
 
