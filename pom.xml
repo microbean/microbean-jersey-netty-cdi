@@ -3,12 +3,12 @@
   <modelVersion>4.0.0</modelVersion>
 
   <artifactId>microbean-jersey-netty-cdi</artifactId>
-  <version>0.2.9-SNAPSHOT</version>
+  <version>0.3.0-SNAPSHOT</version>
 
   <parent>
     <groupId>org.microbean</groupId>
     <artifactId>microbean-pluginmanagement-pom</artifactId>
-    <version>11</version>
+    <version>13</version>
     <relativePath />
   </parent>
 
@@ -35,6 +35,13 @@
 
       <!-- Imports. -->
 
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>4.1.43.Final</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
 
       <dependency>
         <groupId>org.microbean</groupId>
@@ -63,7 +70,7 @@
 
       <!-- Normal dependencies. -->
 
-
+      
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jaxrs-cdi</artifactId>
@@ -74,7 +81,7 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jersey-netty</artifactId>
-        <version>0.9.3</version>
+        <version>0.22.0</version>
         <type>jar</type>
       </dependency>
 
@@ -142,6 +149,20 @@
 
     <!-- Compile-scoped dependencies. -->
 
+    
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport-native-epoll</artifactId>
+      <type>jar</type>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport-native-kqueue</artifactId>
+      <type>jar</type>
+      <scope>compile</scope>
+    </dependency>
 
     <dependency>
       <groupId>org.microbean</groupId>
