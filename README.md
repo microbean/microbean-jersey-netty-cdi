@@ -14,7 +14,7 @@ Add this project as a `runtime`-scoped dependency in your CDI 2.0-based Maven pr
 <dependency>
   <groupId>org.microbean</groupId>
   <artifactId>microbean-jersey-netty-cdi</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <scope>runtime</scope>
 </dependency>
 ```
