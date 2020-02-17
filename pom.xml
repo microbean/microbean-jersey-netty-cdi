@@ -8,7 +8,7 @@
   <parent>
     <groupId>org.microbean</groupId>
     <artifactId>microbean-pluginmanagement-pom</artifactId>
-    <version>13</version>
+    <version>17</version>
     <relativePath />
   </parent>
 
@@ -46,7 +46,7 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-base-specification</artifactId>
-        <version>0.5.0</version>
+        <version>0.6.0</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -54,7 +54,7 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-weld-se-environment</artifactId>
-        <version>0.7.0</version>
+        <version>0.8.0</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -81,7 +81,7 @@
       <dependency>
         <groupId>org.microbean</groupId>
         <artifactId>microbean-jersey-netty</artifactId>
-        <version>0.23.0</version>
+        <version>0.24.0</version>
         <type>jar</type>
       </dependency>
 
